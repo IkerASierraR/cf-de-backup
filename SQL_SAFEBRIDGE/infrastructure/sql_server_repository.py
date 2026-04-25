@@ -4,6 +4,7 @@ Implementación concreta del repositorio SQL Server usando pyodbc.
 """
 import os
 import re
+import socket
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -27,6 +28,44 @@ class SqlServerRepository(IDatabaseRepository):
     Todas las conexiones son sin pool (se abren y cierran por operación)
     para evitar problemas de estado entre hilos.
     """
+
+    # ------------------------------------------------------------------
+    # Descubrimiento automático de servidores
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def discover_servers() -> List[str]:
+        """
+        Genera una lista ordenada de candidatos de servidor basada en el
+        nombre del equipo local.  Se prueban primero las instancias más
+        comunes de SQL Server Express y, como fallback, las variantes
+        de localhost.
+        """
+        hostname = socket.gethostname()
+        return [
+            rf"{hostname}\SQLEXPRESS",
+            hostname,
+            rf"{hostname}\MSSQLSERVER",
+            r"localhost\SQLEXPRESS",
+            "localhost",
+            "(local)",
+        ]
+
+    @classmethod
+    def try_auto_connect(cls) -> Optional[ConnectionConfig]:
+        """
+        Intenta conectarse automáticamente con Autenticación Windows usando
+        la lista de candidatos devuelta por `discover_servers`.
+
+        Returns:
+            ConnectionConfig si la conexión fue exitosa; None en caso contrario.
+        """
+        repo = cls()
+        for server in cls.discover_servers():
+            config = ConnectionConfig(server=server, use_windows_auth=True)
+            if repo.test_connection(config):
+                return config
+        return None
 
     # ------------------------------------------------------------------
     # Conexión / Utilidades internas
@@ -88,13 +127,15 @@ class SqlServerRepository(IDatabaseRepository):
             return [row.name for row in cursor.fetchall()]
 
     def database_exists(self, config: ConnectionConfig, database_name: str) -> bool:
-        """Verifica si una base de datos existe en el servidor."""
+        """Verifica si una base de datos existe en el servidor (consulta parametrizada)."""
         try:
-            result = self._execute_scalar(
-                config, 
-                f"SELECT 1 FROM sys.databases WHERE name = N'{database_name}'"
-            )
-            return result == 1
+            with self._connect(config) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT 1 FROM sys.databases WHERE name = ?",
+                    (database_name,),
+                )
+                return cursor.fetchone() is not None
         except pyodbc.Error:
             return False
 
