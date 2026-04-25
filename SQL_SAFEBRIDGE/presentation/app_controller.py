@@ -68,6 +68,8 @@ class AppController(ctk.CTk):
         """
         Ejecuta en segundo plano: intenta conectarse con Autenticación Windows
         usando los servidores candidatos del equipo local.
+        Siempre pasa la lista de candidatos al login para que el usuario
+        pueda elegir entre ellos si la conexión automática falla.
         """
         self.after(
             0,
@@ -76,13 +78,18 @@ class AppController(ctk.CTk):
                 "gray",
             ),
         )
+
+        # Obtener candidatos y pasarlos al login como sugerencias de inmediato
+        candidates = SqlServerRepository.discover_servers()
+        self.after(0, lambda: self._update_server_suggestions(candidates))
+
         config = SqlServerRepository.try_auto_connect()
         if config is None:
             self.after(
                 0,
                 lambda: self._update_login_status(
                     "⚠️ No se detectó SQL Server automáticamente. "
-                    "Introduce los datos manualmente.",
+                    "Selecciona una opción del desplegable o escribe el servidor manualmente.",
                     COLOR_WARNING,
                 ),
             )
@@ -109,6 +116,13 @@ class AppController(ctk.CTk):
         for widget in self.winfo_children():
             if isinstance(widget, LoginScreen):
                 widget.show_auto_connect_status(message, color)
+                break
+
+    def _update_server_suggestions(self, servers: list) -> None:
+        """Pasa la lista de servidores detectados al combobox del login."""
+        for widget in self.winfo_children():
+            if isinstance(widget, LoginScreen):
+                widget.set_server_suggestions(servers)
                 break
 
     # ------------------------------------------------------------------
@@ -171,20 +185,25 @@ class AppController(ctk.CTk):
         def _do_connect() -> None:
             ok = self._repository.test_connection(config)
             if not ok:
-                auth_hint = (
-                    "Autenticación Windows"
-                    if use_windows_auth
-                    else "las credenciales"
-                )
-                self.after(
-                    0,
-                    lambda: self._on_login_failed(
+                if use_windows_auth:
+                    hint = (
+                        f"No se pudo conectar al servidor '{server}' usando "
+                        "Autenticación Windows.\n\n"
+                        "Posibles causas:\n"
+                        "• El nombre del servidor o instancia es incorrecto\n"
+                        "  (usa el desplegable para ver las opciones detectadas)\n"
+                        "• SQL Server no está iniciado\n"
+                        "• La cuenta de Windows no tiene acceso a SQL Server"
+                    )
+                else:
+                    hint = (
                         f"No se pudo conectar al servidor '{server}'.\n\n"
-                        f"Verifica:\n"
-                        f"• El nombre del servidor\n"
-                        f"• {auth_hint}"
-                    ),
-                )
+                        "Posibles causas:\n"
+                        "• El nombre del servidor o instancia es incorrecto\n"
+                        "• El usuario o la contraseña son incorrectos\n"
+                        "• La autenticación SQL Server no está habilitada"
+                    )
+                self.after(0, lambda: self._on_login_failed(hint))
                 return
 
             has_perm = self._repository.validate_permissions(config)

@@ -5,7 +5,7 @@ defecto) o SQL Server, con banner de estado para el intento automático.
 """
 import socket
 import tkinter as tk
-from typing import Callable
+from typing import Callable, List
 
 import customtkinter as ctk
 
@@ -99,13 +99,18 @@ class LoginScreen(ctk.CTkFrame):
         ctk.CTkLabel(card, text="Servidor SQL Server", anchor="w").grid(
             row=0, column=0, sticky="w", padx=20, pady=(20, 2)
         )
-        self._server_entry = ctk.CTkEntry(
+        # Usar un ComboBox para que las sugerencias detectadas automáticamente
+        # sean seleccionables desde el menú desplegable.
+        self._server_entry = ctk.CTkComboBox(
             card,
-            placeholder_text=rf"{self._hostname}\SQLEXPRESS",
+            values=[
+                self._hostname,
+                rf"{self._hostname}\SQLEXPRESS",
+            ],
             height=38,
         )
-        # Pre-rellenar con la instancia más común
-        self._server_entry.insert(0, rf"{self._hostname}\SQLEXPRESS")
+        # Pre-rellenar con la instancia por defecto (sin nombre de instancia)
+        self._server_entry.set(self._hostname)
         self._server_entry.grid(row=1, column=0, sticky="ew", padx=20)
 
         # ── Modo de autenticación ────────────────────────────────────
@@ -185,8 +190,9 @@ class LoginScreen(ctk.CTkFrame):
             row=6, column=0, sticky="ew", padx=20, pady=(14, 20)
         )
 
-        # Bind Enter en todos los campos de texto
-        for entry in (self._server_entry, self._user_entry, self._pwd_entry):
+        # Bind Enter en los campos de texto (el ComboBox del servidor no admite
+        # bind de Return de la misma forma, así que sólo se enlaza en credenciales)
+        for entry in (self._user_entry, self._pwd_entry):
             entry.bind("<Return>", lambda _e: self._on_connect())
 
     # ------------------------------------------------------------------
@@ -243,3 +249,19 @@ class LoginScreen(ctk.CTkFrame):
     def show_auto_connect_status(self, message: str, color: str = "gray") -> None:
         """Muestra un mensaje de estado del intento de conexión automática."""
         self._error_label.configure(text=message, text_color=color)
+
+    def set_server_suggestions(self, servers: List[str]) -> None:
+        """
+        Actualiza la lista desplegable del campo Servidor con los candidatos
+        detectados automáticamente.  Si la lista no está vacía, establece el
+        primer elemento como valor actual (mayor prioridad).
+        """
+        if not servers:
+            return
+        self._server_entry.configure(values=servers)
+        # Seleccionar el candidato de mayor prioridad sólo si el campo aún
+        # tiene el valor por defecto (hostname sin instancia) para no
+        # sobreescribir lo que el usuario haya escrito manualmente.
+        current = self._server_entry.get().strip()
+        if current == self._hostname:
+            self._server_entry.set(servers[0])
